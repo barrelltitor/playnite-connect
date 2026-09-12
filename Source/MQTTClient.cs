@@ -1,21 +1,21 @@
-﻿
-using ColorThiefDotNet;
+
 using Microsoft.Win32;
-using MQTTClient.Discovery;
 using MQTTClient.Helpers;
 using MQTTnet;
 using MQTTnet.Client;
 using MQTTnet.Protocol;
+using Newtonsoft.Json;
 using Playnite.SDK;
 using Playnite.SDK.Events;
 using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
 using System;
 using System.Collections.Generic;
-using System.Drawing;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -37,17 +37,17 @@ namespace MQTTClient
 
         private readonly MQTTClientSettingsViewModel settings;
 
+        private readonly CoverApiServer coverApiServer;
+
         private readonly TopicHelper topicHelper;
-
-        private readonly ColorThief colorThief;
-
-        private readonly DiscoveryModule discoveryModule;
 
         private readonly ObjectSerializer serializer;
 
         private readonly CancellationTokenSource applicationClosingCompletionSource;
 
         private readonly IProgress<float> sidebarProgress;
+
+        private readonly SemaphoreSlim librarySyncLock = new SemaphoreSlim(1, 1);
 
         private readonly IProgress<ConnectionState> connectedState;
 
@@ -57,6 +57,7 @@ namespace MQTTClient
         {
             serializer = new ObjectSerializer();
             settings = new MQTTClientSettingsViewModel(this);
+            coverApiServer = new CoverApiServer(PlayniteApi, () => settings.Settings.CoverApiToken);
             Properties = new GenericPluginProperties
             {
                 HasSettings = true
@@ -65,8 +66,6 @@ namespace MQTTClient
             applicationClosingCompletionSource = new CancellationTokenSource();
             client = (MqttClient)new MqttFactory().CreateMqttClient();
             topicHelper = new TopicHelper(client, settings);
-            discoveryModule = new DiscoveryModule(settings, PlayniteApi, topicHelper, client, serializer);
-            colorThief = new ColorThief();
             
             var progressSidebar = new SidebarItem
             {
@@ -103,42 +102,51 @@ namespace MQTTClient
             {
                 new MainMenuItem
                 {
-                    Description = "Reconnect", MenuSection = "@MQTT Client", Action = ReconnectMenuAction
+                    Description = "Reconnect", MenuSection = "@Playnite Connect", Action = ReconnectMenuAction
                 },
                 new MainMenuItem
                 {
-                    Description = "Disconnect", MenuSection = "@MQTT Client", Action = DisconnectMenuAction
+                    Description = "Disconnect", MenuSection = "@Playnite Connect", Action = DisconnectMenuAction
                 }
             };
         }
 
-        public Task StartDisconnect(bool notify = false)
+        public async Task StartDisconnect(bool notify = false)
         {
-            var task = Task.CompletedTask;
-            
-            if (client.IsConnected)
+            if (!client.IsConnected)
             {
-                if (topicHelper.TryGetTopic(Topics.ConnectionSubTopic, out var connectionTopic) &&
-                    topicHelper.TryGetTopic(Topics.SelectedGameStatusSubTopic, out var selectedGameStatusTopic))
-                {
-                    task = client.PublishStringAsync(connectionTopic, "offline", retain: true)
-                        .ContinueWith(async t => await client.PublishStringAsync(selectedGameStatusTopic, "offline", retain: true));
-                }
-                
-                task = task.ContinueWith(async r => await client.DisconnectAsync())
-                    .ContinueWith(
-                        t =>
-                        {
-                            if (notify && !client.IsConnected)
-                            {
-                                PlayniteApi.Dialogs.ShowMessage("MQTT Disconnected","MQTT Status");
-                            }
-                        });
+                return;
             }
 
-            return task;
-        }
+            try
+            {
+                if (topicHelper.TryGetTopic(Topics.ConnectionSubTopic, out var connectionTopic))
+                {
+                    await client.PublishStringAsync(connectionTopic, "offline", retain: true);
+                }
+            }
+            catch (Exception exception)
+            {
+                // An unavailable broker must not prevent a local disconnect.
+                logger.Warn(exception, "Failed to publish MQTT offline status before disconnecting.");
+            }
+            finally
+            {
+                try
+                {
+                    await client.DisconnectAsync();
+                }
+                catch (Exception exception)
+                {
+                    logger.Warn(exception, "Failed to disconnect MQTT client cleanly.");
+                }
+            }
 
+            if (notify && !client.IsConnected)
+            {
+                PlayniteApi.Dialogs.ShowMessage("MQTT Disconnected", "MQTT Status");
+            }
+        }
         public async Task<MqttClientConnectResult> StartConnectionTask(bool notifyCompletion, IProgress<float> progress = null,CancellationToken cancellationToken = default)
         {
             var optionsUnBuilt = new MqttClientOptionsBuilder().WithClientId(settings.Settings.ClientId)
@@ -172,9 +180,9 @@ namespace MQTTClient
                 }
                 if (settings.Settings.Notifications && client.IsConnected)
                 {
-                    //PlayniteApi.Notifications.Add("MQTT Client", "MQTT Connected", NotificationType.Info);
+                    //PlayniteApi.Notifications.Add("Playnite MQTT Library", "MQTT Connected", NotificationType.Info);
                     PlayniteApi.Notifications.Add(
-                        new NotificationMessage(Guid.NewGuid().ToString(), DateTime.Now.ToString("dd/MM/yyyy hh:mm:ss") + "\nMQTT Connected", NotificationType.Info)
+                        new NotificationMessage(Guid.NewGuid().ToString(), DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss") + "\nMQTT Connected", NotificationType.Info)
                     );
                 }
                 if (client.IsConnected)
@@ -228,80 +236,54 @@ namespace MQTTClient
         {
             if (client.IsConnected)
             {
-                StartDisconnect(settings.Settings.ShowStatusChanged).Wait(300);
-                if (settings.Settings.Notifications && !client.IsConnected)
-                {
-                    //PlayniteApi.Notifications.Add("MQTT Client", "MQTT Disconnected", NotificationType.Info);
-                    PlayniteApi.Notifications.Add(
-                        new NotificationMessage(Guid.NewGuid().ToString(), DateTime.Now.ToString("dd/MM/yyyy hh:mm:ss") + "\nMQTT Disconnected", NotificationType.Info)
-                    );
-                }
+                _ = DisconnectFromUiAsync(settings.Settings.ShowStatusChanged);
+                return;
             }
-            else
-            {
-                StartConnection(settings.Settings.ShowStatusChanged);
-                if (settings.Settings.Notifications && client.IsConnected)
-                {
-                    //PlayniteApi.Notifications.Add("MQTT Client", "MQTT Connected", NotificationType.Info);
-                    PlayniteApi.Notifications.Add(
-                        new NotificationMessage(Guid.NewGuid().ToString(), DateTime.Now.ToString("dd/MM/yyyy hh:mm:ss") + "\nMQTT Connected", NotificationType.Info)
-                    );
-                }
-            }
+
+            StartConnection(settings.Settings.ShowStatusChanged);
         }
 
+        private async Task DisconnectFromUiAsync(bool notifyCompletion)
+        {
+            await StartDisconnect(notifyCompletion);
+            if (settings.Settings.Notifications && !client.IsConnected)
+            {
+                PlayniteApi.Notifications.Add(
+                    new NotificationMessage(
+                        Guid.NewGuid().ToString(),
+                        DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss") + "\nMQTT Disconnected",
+                        NotificationType.Info));
+            }
+        }
         private async Task ClientOnConnectedAsync(EventArgs eventArgs)
         {
             sidebarProgress.Report(0.6f);
-
             if (topicHelper.TryGetTopic(Topics.ConnectionSubTopic, out var connectionTopic))
             {
                 await client.PublishStringAsync(connectionTopic, "online", cancellationToken: applicationClosingCompletionSource.Token, retain: true);
             }
 
-            sidebarProgress.Report(0.7f);
-
-            await UpdateSelectedGames(PlayniteApi.MainView.SelectedGames,applicationClosingCompletionSource.Token);
-
-            sidebarProgress.Report(0.8f);
-
-            if (topicHelper.TryGetTopic(Topics.ActiveViewSubTopic, out var activeViewTopic))
-            {
-                await client.PublishStringAsync(activeViewTopic, PlayniteApi.MainView.ActiveDesktopView.ToString(),cancellationToken:applicationClosingCompletionSource.Token);
-            }
-
-            sidebarProgress.Report(0.9f);
-
-            await discoveryModule.Initialize();
-
+            await SubscribeToLibraryProtocolAsync(applicationClosingCompletionSource.Token);
+            await PublishLibrarySnapshotAsync(null, applicationClosingCompletionSource.Token);
             sidebarProgress.Report(1f);
             connectedState.Report(ConnectionState.Connected);
         }
 
         private void DisconnectMenuAction(MainMenuItemActionArgs obj)
         {
-            if (settings.Settings.ShowStatusChanged)
-            {
-                StartDisconnect().ContinueWith(t => PlayniteApi.Dialogs.ShowMessage("MQTT Disconnected Successfully")).Wait(TimeSpan.FromSeconds(3));
-            }
-            else
-            {
-                StartDisconnect();
-            }
-
-            if (settings.Settings.Notifications) {
-                //PlayniteApi.Notifications.Add("MQTT Client", "MQTT Disconnected Successfully", NotificationType.Info);
-                PlayniteApi.Notifications.Add(
-                        new NotificationMessage(Guid.NewGuid().ToString(), DateTime.Now.ToString("dd/MM/yyyy hh:mm:ss") + "\nMQTT Disconnected Successfully", NotificationType.Info)
-                    );
-            }
+            _ = DisconnectFromUiAsync(settings.Settings.ShowStatusChanged);
         }
 
         private void ReconnectMenuAction(MainMenuItemActionArgs obj)
         {
-            StartDisconnect().ContinueWith(r => StartConnection(true)).Wait(applicationClosingCompletionSource.Token);
+            _ = ReconnectAsync();
         }
 
+        private async Task ReconnectAsync()
+        {
+            await StartDisconnect();
+            StartConnection(true);
+        }
         private Task ClientOnDisconnectedAsync(EventArgs eventArgs)
         {
             connectedState.Report(ConnectionState.Disconnected);
@@ -333,211 +315,572 @@ namespace MQTTClient
             return Task.CompletedTask;
         }
 
-        private async Task<MqttClientPublishResult> PublishFileAsync(
-            string topic,
-            string filePath = null,
-            MqttQualityOfServiceLevel qualityOfServiceLevel = MqttQualityOfServiceLevel.AtMostOnce,
-            bool retain = false,
-            CancellationToken cancellationToken = default)
+        private async Task SubscribeToLibraryProtocolAsync(CancellationToken cancellationToken)
         {
-            if (!string.IsNullOrEmpty(filePath))
+            var topics = new[]
             {
-                var coverPath = PlayniteApi.Database.GetFullFilePath(filePath);
-                if (File.Exists(coverPath))
+                Topics.LibraryRequestSubTopic,
+                Topics.LibraryCommandSubTopic,
+                Topics.LibraryCoverRequestSubTopic
+            };
+            foreach (var subTopic in topics)
+            {
+                if (!topicHelper.TryGetTopic(subTopic, out var topic))
                 {
-                    using (var fileStream = File.OpenRead(coverPath))
-                    {
-                        var result = new byte[fileStream.Length];
-                        await fileStream.ReadAsync(result, 0, result.Length, cancellationToken);
-                        return await client.PublishBinaryAsync(
-                            topic,
-                            result,
-                            retain: retain,
-                            qualityOfServiceLevel: qualityOfServiceLevel,
-                            cancellationToken: cancellationToken);
-                    }
+                    continue;
                 }
+
+                await client.SubscribeAsync(
+                    new MqttClientSubscribeOptionsBuilder()
+                        .WithTopicFilter(topic, MqttQualityOfServiceLevel.AtLeastOnce)
+                        .Build(),
+                    cancellationToken);
+            }
+        }
+
+        private async Task ClientOnApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs args)
+        {
+            if (!topicHelper.TryGetTopic(Topics.LibraryRequestSubTopic, out var requestTopic) ||
+                !topicHelper.TryGetTopic(Topics.LibraryCommandSubTopic, out var commandTopic) ||
+                !topicHelper.TryGetTopic(Topics.LibraryCoverRequestSubTopic, out var coverRequestTopic))
+            {
+                return;
             }
 
-            return await client.PublishBinaryAsync(
+            var messageTopic = args.ApplicationMessage.Topic;
+            var payloadSegment = args.ApplicationMessage.PayloadSegment;
+            var payload = payloadSegment.Array == null
+                ? string.Empty
+                : Encoding.UTF8.GetString(payloadSegment.Array, payloadSegment.Offset, payloadSegment.Count);
+            try
+            {
+                if (string.Equals(messageTopic, requestTopic, StringComparison.Ordinal))
+                {
+                    var request = JsonConvert.DeserializeObject<LibraryRequest>(payload) ?? new LibraryRequest();
+                    await PublishLibrarySnapshotAsync(request.RequestId, applicationClosingCompletionSource.Token);
+                }
+                else if (string.Equals(messageTopic, commandTopic, StringComparison.Ordinal))
+                {
+                    var command = JsonConvert.DeserializeObject<LibraryCommand>(payload);
+                    if (command == null)
+                    {
+                        throw new InvalidOperationException("Library command payload is empty.");
+                    }
+
+                    await HandleLibraryCommandAsync(command, applicationClosingCompletionSource.Token);
+                }
+                else if (string.Equals(messageTopic, coverRequestTopic, StringComparison.Ordinal))
+                {
+                    var request = JsonConvert.DeserializeObject<LibraryCoverRequest>(payload);
+                    if (request == null)
+                    {
+                        throw new InvalidOperationException("Cover request payload is empty.");
+                    }
+
+                    await PublishCoverAsync(request, applicationClosingCompletionSource.Token);
+                }
+            }
+            catch (Exception exception)
+            {
+                logger.Error(exception, "Failed to process a Playnite library MQTT message.");
+            }
+        }
+        private async Task PublishLibrarySnapshotAsync(string requestId, CancellationToken cancellationToken)
+        {
+            if (!client.IsConnected ||
+                !topicHelper.TryGetTopic(Topics.LibraryManifestSubTopic, out var manifestTopic) ||
+                !topicHelper.TryGetTopic(Topics.LibraryChunkSubTopic, out var chunkTopic))
+            {
+                return;
+            }
+
+            await librarySyncLock.WaitAsync(cancellationToken);
+            try
+            {
+                if (!client.IsConnected)
+                {
+                    return;
+                }
+
+                var revision = Guid.NewGuid().ToString("N");
+                var games = PlayniteApi.Database.Games
+                    .Select(game => new LibraryGameData(game))
+                    .OrderBy(game => game.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var chunks = games
+                    .Select((game, index) => new { game, index })
+                    .GroupBy(item => item.index / LibraryProtocol.GamesPerChunk)
+                    .Select(group => group.Select(item => item.game).ToList())
+                    .ToList();
+
+                for (var index = 0; index < chunks.Count; index++)
+                {
+                    var chunk = new LibraryChunk
+                    {
+                        Revision = revision,
+                        Index = index,
+                        Games = chunks[index]
+                    };
+                    await client.PublishStringAsync(
+                        $"{chunkTopic}/{index}",
+                        serializer.Serialize(chunk),
+                        MqttQualityOfServiceLevel.AtLeastOnce,
+                        true,
+                        cancellationToken);
+                }
+
+                // The retained manifest is the commit marker. A consumer only accepts
+                // chunks with its revision, so older retained chunks are harmless.
+                var manifest = new LibraryManifest
+                {
+                    Revision = revision,
+                    GeneratedAt = DateTime.UtcNow,
+                    GameCount = games.Count,
+                    ChunkCount = chunks.Count,
+                    RequestId = requestId
+                };
+                await client.PublishStringAsync(
+                    manifestTopic,
+                    serializer.Serialize(manifest),
+                    MqttQualityOfServiceLevel.AtLeastOnce,
+                    true,
+                    cancellationToken);
+                // Status is retained separately from the large snapshot. It powers the
+                // native HA selected-game control and read-only active-view status.
+                await PublishLibraryStatusAsync(cancellationToken);
+                logger.Info($"Published Playnite library snapshot {revision} with {games.Count} games in {chunks.Count} chunks.");
+            }
+            finally
+            {
+                librarySyncLock.Release();
+            }
+        }
+
+        private async Task PublishLibraryStatusAsync(CancellationToken cancellationToken)
+        {
+            if (!client.IsConnected || !topicHelper.TryGetTopic(Topics.LibraryStatusSubTopic, out var topic))
+            {
+                return;
+            }
+
+            var selectedGame = PlayniteApi.MainView.SelectedGames?.FirstOrDefault();
+            var status = new LibraryStatus
+            {
+                SelectedGameId = selectedGame?.Id.ToString(),
+                ActiveDesktopView = PlayniteApi.MainView.ActiveDesktopView.ToString(),
+                PlayniteVersion = PlayniteApi.ApplicationInfo.ApplicationVersion.ToString()
+            };
+            await client.PublishStringAsync(
                 topic,
-                retain: retain,
-                qualityOfServiceLevel: qualityOfServiceLevel,
-                cancellationToken: cancellationToken);
+                serializer.Serialize(status),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                true,
+                cancellationToken);
         }
-
-        private async Task<ArraySegment<byte>?> GetCoverData(string path)
+        private async Task PublishLibraryUpdateAsync(Game game, string eventName, CancellationToken cancellationToken)
         {
-            if (!string.IsNullOrEmpty(path) && File.Exists(PlayniteApi.Database.GetFullFilePath(path)))
+            if (!topicHelper.TryGetTopic(Topics.LibraryUpdateSubTopic, out var topic))
             {
-                using (FileStream fileStream = new FileStream(PlayniteApi.Database.GetFullFilePath(path), FileMode.Open))
-                {
-                    byte[] buffer = new byte[fileStream.Length];
-                    int length = await fileStream.ReadAsync(buffer, 0, buffer.Length);
-                    return new ArraySegment<byte>(buffer, 0, length);
-                }
+                return;
             }
 
-            return null;
+            await client.PublishStringAsync(
+                topic,
+                serializer.Serialize(new LibraryUpdate { Event = eventName, Game = new LibraryGameData(game) }),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                cancellationToken);
         }
 
-        private async Task PublishGame(string topic, Game game, ArraySegment<byte>? coverData, bool retain, CancellationToken cancellationToken = default)
+        private async Task PublishCoverAsync(LibraryCoverRequest request, CancellationToken cancellationToken)
         {
-            var color = new ColorThiefDotNet.Color();
-            if (settings.Settings.PublishCoverColors)
+            if (!Guid.TryParse(request.GameId, out var gameId))
             {
-                if (coverData?.Array != null)
-                {
-                    using (var memoryStream = new MemoryStream(coverData.Value.Array, coverData.Value.Offset, coverData.Value.Count, false))
-                    {
-                        color = colorThief.GetColor(new Bitmap(memoryStream)).Color;
-                    }
-                }
+                await PublishCoverErrorAsync(request, "gameId must be a Playnite game GUID.", cancellationToken);
+                return;
             }
 
-            await client.PublishStringAsync(topic, serializer.Serialize(new GameData(game, color)), retain: retain,cancellationToken:cancellationToken);
+            var game = PlayniteApi.Database.Games.FirstOrDefault(item => item.Id == gameId);
+            if (game == null)
+            {
+                await PublishCoverErrorAsync(request, "The requested game no longer exists in Playnite.", cancellationToken);
+                return;
+            }
+
+            var imageType = string.IsNullOrWhiteSpace(request.ImageType)
+                ? LibraryProtocol.ImageTypeCover
+                : request.ImageType.Trim().ToLowerInvariant();
+            string imageReference;
+            switch (imageType)
+            {
+                case LibraryProtocol.ImageTypeCover:
+                    imageReference = game.CoverImage;
+                    break;
+                case LibraryProtocol.ImageTypeBackground:
+                    imageReference = game.BackgroundImage;
+                    break;
+                case LibraryProtocol.ImageTypeIcon:
+                    imageReference = game.Icon;
+                    break;
+                default:
+                    await PublishCoverErrorAsync(request, "imageType must be cover, background, or icon.", cancellationToken);
+                    return;
+            }
+
+            string imagePath;
+            try
+            {
+                imagePath = PlayniteApi.Database.GetFullFilePath(imageReference);
+            }
+            catch (Exception exception)
+            {
+                logger.Error(exception, $"Failed to resolve Playnite {imageType} image for {game.Name}.");
+                await PublishCoverErrorAsync(request, $"This game has no accessible {imageType} image.", cancellationToken);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            {
+                await PublishCoverErrorAsync(request, $"This game has no accessible {imageType} image.", cancellationToken);
+                return;
+            }
+
+            var fileInfo = new FileInfo(imagePath);
+            if (fileInfo.Length > LibraryProtocol.MaximumCoverBytes)
+            {
+                await PublishCoverErrorAsync(request, $"This Playnite {imageType} image exceeds the 10 MB transfer limit.", cancellationToken);
+                return;
+            }
+
+            byte[] data;
+            try
+            {
+                data = File.ReadAllBytes(imagePath);
+            }
+            catch (Exception exception)
+            {
+                logger.Error(exception, $"Failed to read Playnite {imageType} image for {game.Name}.");
+                await PublishCoverErrorAsync(request, $"This game has no accessible {imageType} image.", cancellationToken);
+                return;
+            }
+            var chunkCount = Math.Max(1, (int)Math.Ceiling((double)data.Length / LibraryProtocol.CoverBytesPerChunk));
+            for (var index = 0; index < chunkCount; index++)
+            {
+                var offset = index * LibraryProtocol.CoverBytesPerChunk;
+                var count = Math.Min(LibraryProtocol.CoverBytesPerChunk, data.Length - offset);
+                var chunkData = new byte[count];
+                Buffer.BlockCopy(data, offset, chunkData, 0, count);
+                await PublishCoverChunkAsync(new LibraryCoverChunk
+                {
+                    RequestId = request.RequestId,
+                    GameId = request.GameId,
+                    ImageType = imageType,
+                    Index = index,
+                    ChunkCount = chunkCount,
+                    ContentType = GetImageContentType(imagePath),
+                    Data = Convert.ToBase64String(chunkData)
+                }, cancellationToken);
+            }
+        }
+        private async Task PublishCoverErrorAsync(LibraryCoverRequest request, string error, CancellationToken cancellationToken)
+        {
+            await PublishCoverChunkAsync(new LibraryCoverChunk
+            {
+                RequestId = request.RequestId,
+                GameId = request.GameId,
+                ImageType = request.ImageType,
+                Error = error,
+                ChunkCount = 0
+            }, cancellationToken);
         }
 
-        private async Task UpdateSelectedGames(IEnumerable<Game> selectedGames,CancellationToken cancellationToken = default)
+        private async Task PublishCoverChunkAsync(LibraryCoverChunk chunk, CancellationToken cancellationToken)
         {
-            var first = selectedGames.FirstOrDefault();
-            if (first != null)
+            if (!topicHelper.TryGetTopic(Topics.LibraryCoverChunkSubTopic, out var topic))
             {
-                if (topicHelper.TryGetTopic(Topics.SelectedGameStatusSubTopic, out var statusTopic) &&
-                    topicHelper.TryGetTopic(Topics.SelectedGameAttributesSubTopic, out var attributesTopic) &&
-                    topicHelper.TryGetTopic(Topics.SelectedGameCoverSubTopic, out var selectedGameCoverSubTopic))
-                {
-                    await client.PublishStringAsync(statusTopic, "online", retain: true, cancellationToken: cancellationToken);
-                    var cover = settings.Settings.PublishCover || settings.Settings.PublishCoverColors ? await GetCoverData(first.CoverImage) : null;
-                    await PublishGame(attributesTopic, first, cover, true,cancellationToken);
+                return;
+            }
 
-                    if (settings.Settings.PublishCover)
-                    {
-                        if (!cover.HasValue && first.Platforms != null)
+            await client.PublishStringAsync(
+                $"{topic}/{chunk.RequestId}/{chunk.Index}",
+                serializer.Serialize(chunk),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                cancellationToken);
+        }
+
+        private static string GetImageContentType(string path)
+        {
+            switch (Path.GetExtension(path).ToLowerInvariant())
+            {
+                case ".png": return "image/png";
+                case ".webp": return "image/webp";
+                case ".gif": return "image/gif";
+                case ".bmp": return "image/bmp";
+                default: return "image/jpeg";
+            }
+        }
+
+        private async Task HandleLibraryCommandAsync(LibraryCommand command, CancellationToken cancellationToken)
+        {
+            var response = new LibraryResponse
+            {
+                RequestId = command.RequestId,
+                Action = command.Action,
+                GameId = command.GameId
+            };
+
+            try
+            {
+                if (!Guid.TryParse(command.GameId, out var gameId))
+                {
+                    throw new InvalidOperationException("gameId must be a Playnite game GUID.");
+                }
+
+                var game = PlayniteApi.Database.Games.FirstOrDefault(item => item.Id == gameId);
+                if (game == null)
+                {
+                    throw new InvalidOperationException("The requested game no longer exists in Playnite.");
+                }
+
+                switch ((command.Action ?? string.Empty).Trim().ToLowerInvariant())
+                {
+                    case "select":
+                        // SelectGame is a real public Playnite API call, unlike the
+                        // legacy MQTT Discovery select topic which had no handler.
+                        PlayniteApi.MainView.SelectGame(gameId);
+                        response.Message = "Game selected in Playnite.";
+                        break;
+                    case "start":
+                        if (game.IsInstalled)
                         {
-                            cover = await GetCoverData(first.Platforms.FirstOrDefault(p => !string.IsNullOrEmpty(p.Cover))?.Cover);
+                            PlayniteApi.StartGame(gameId);
+                            response.Message = "Start requested.";
                         }
-                        if (cover.HasValue)
+                        else
                         {
-                            await client.PublishBinaryAsync(selectedGameCoverSubTopic, cover.Value, retain: true, cancellationToken:cancellationToken);
+                            PlayniteApi.InstallGame(gameId);
+                            response.Message = "Game is not installed; install requested.";
                         }
-                    }
+                        break;
+                    case "install":
+                        if (!game.IsInstalled)
+                        {
+                            PlayniteApi.InstallGame(gameId);
+                            response.Message = "Install requested.";
+                        }
+                        else
+                        {
+                            response.Message = "Game is already installed.";
+                        }
+                        break;
+                    case "uninstall":
+                        if (game.IsInstalled)
+                        {
+                            PlayniteApi.UninstallGame(gameId);
+                            response.Message = "Uninstall requested.";
+                        }
+                        else
+                        {
+                            response.Message = "Game is already uninstalled.";
+                        }
+                        break;
+                    case "stop":
+                        var stoppedCount = StopGameProcesses(game);
+                        if (stoppedCount == 0)
+                        {
+                            throw new InvalidOperationException("No running process could be matched safely to this game's install directory.");
+                        }
+                        response.Message = $"Stopped {stoppedCount} game process(es).";
+                        break;
+                    case "restart":
+                        var restartStoppedCount = StopGameProcesses(game);
+                        if (restartStoppedCount == 0)
+                        {
+                            throw new InvalidOperationException("No running process could be matched safely to this game's install directory.");
+                        }
+                        await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+                        PlayniteApi.StartGame(gameId);
+                        response.Message = $"Stopped {restartStoppedCount} game process(es) and requested restart.";
+                        break;
+                    default:
+                        throw new InvalidOperationException("Unsupported action. Use select, start, stop, restart, install, or uninstall.");
                 }
+
+                response.Success = true;
             }
-            else
+            catch (Exception exception)
             {
-                if (topicHelper.TryGetTopic(Topics.SelectedGameStatusSubTopic, out var statusTopic) &&
-                    topicHelper.TryGetTopic(Topics.SelectedGameAttributesSubTopic, out var attributesTopic) &&
-                    topicHelper.TryGetTopic(Topics.SelectedGameCoverSubTopic, out var selectedGameCoverSubTopic))
-                {
-                    await client.PublishStringAsync(statusTopic, "offline", retain: true, cancellationToken: cancellationToken);
-                    await client.PublishStringAsync(attributesTopic, retain: true,cancellationToken: cancellationToken);
-                    await PublishFileAsync(selectedGameCoverSubTopic, retain: true, cancellationToken:cancellationToken);
-                }
+                response.Success = false;
+                response.Message = exception.Message;
+                logger.Error(exception, $"Failed Playnite library command {command.Action} for {command.GameId}.");
             }
+
+            await PublishLibraryResponseAsync(response, cancellationToken);
         }
 
+        private async Task PublishLibraryResponseAsync(LibraryResponse response, CancellationToken cancellationToken)
+        {
+            if (!topicHelper.TryGetTopic(Topics.LibraryResponseSubTopic, out var topic))
+            {
+                return;
+            }
+
+            await client.PublishStringAsync(
+                topic,
+                serializer.Serialize(response),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                cancellationToken);
+        }
+
+        public async void ApplySettings()
+        {
+            // Settings are already persisted by the view model when this runs.
+            // Awaiting here keeps a reconnect from racing an active disconnect.
+            await StartDisconnect();
+            StartConnection();
+            RestartCoverApi();
+        }
+        public void RestartCoverApi()
+        {
+            coverApiServer.Restart(
+                settings.Settings.CoverApiEnabled,
+                settings.Settings.CoverApiNetworkAccess,
+                settings.Settings.CoverApiPort);
+        }
+
+        public bool EnableCoverApiNetworkAccess(out string message)
+        {
+            if (!IPAddress.TryParse(settings.Settings.CoverApiHomeAssistantAddress, out var homeAssistantAddress) ||
+                homeAssistantAddress.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+            {
+                message = "Enter Home Assistant's IPv4 address first.";
+                return false;
+            }
+
+            try
+            {
+                var port = settings.Settings.CoverApiPort;
+                var processInfo = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    // URL ACL permits the listener. The firewall rule admits only the
+                    // configured HA host; the bearer token is still required per request.
+                    Arguments = $"/c netsh http add urlacl url=http://+:{port}/ sddl=D:(A;;GX;;;S-1-1-0) & netsh advfirewall firewall delete rule name=\"Playnite Connect Covers\" & netsh advfirewall firewall add rule name=\"Playnite Connect Covers\" dir=in action=allow protocol=tcp localport={port} remoteip={homeAssistantAddress} profile=private",
+                    Verb = "runas",
+                    UseShellExecute = true,
+                    CreateNoWindow = true
+                };
+                var process = Process.Start(processInfo);
+                process?.WaitForExit(10000);
+                settings.Settings.CoverApiEnabled = true;
+                settings.Settings.CoverApiNetworkAccess = true;
+                SavePluginSettings(settings.Settings);
+                RestartCoverApi();
+                message = coverApiServer.IsNetworkBound
+                    ? $"Network access enabled. Home Assistant can use http://<this-pc-ip>:{port}/api/covers/<game-id>."
+                    : "Windows completed the request, but the API could not bind to the network. Check the Playnite log.";
+                return coverApiServer.IsNetworkBound;
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                message = "Cancelled — administrator permission is required to enable network access.";
+                return false;
+            }
+            catch (Exception exception)
+            {
+                logger.Error(exception, "Failed to enable Playnite Connect cover API network access.");
+                message = $"Failed to enable network access: {exception.Message}";
+                return false;
+            }
+        }
+        private static int StopGameProcesses(Game game)
+        {
+            if (string.IsNullOrWhiteSpace(game.InstallDirectory) || !Directory.Exists(game.InstallDirectory))
+            {
+                throw new InvalidOperationException("This game has no accessible install directory, so it cannot be stopped safely.");
+            }
+
+            var installDirectory = Path.GetFullPath(game.InstallDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var stoppedCount = 0;
+            foreach (var process in Process.GetProcesses())
+            {
+                try
+                {
+                    var executablePath = process.MainModule?.FileName;
+                    if (string.IsNullOrEmpty(executablePath) ||
+                        !Path.GetFullPath(executablePath).StartsWith(installDirectory, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    process.Kill();
+                    stoppedCount++;
+                }
+                catch (Exception)
+                {
+                    // Processes owned by another session or protected by Windows are
+                    // ignored. The response reports failure if none can be stopped.
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+
+            return stoppedCount;
+        }
         #region Overrides of Plugin
 
-        public override Guid Id { get; } = Guid.Parse("90c44048-4f8f-43f7-a0c1-f8164bf1d7ef");
+        public override Guid Id { get; } = Guid.Parse("b81e4a83-823d-4a83-89e8-aee39f17a483");
 
         public override void OnLibraryUpdated(OnLibraryUpdatedEventArgs args)
         {
-            PlayniteApi.Dialogs.ActivateGlobalProgress(
-                arg =>
-                {
-                    arg.CurrentProgressValue = -1;
-                    Task.Run(async () => await discoveryModule.UpdateSelectedGamesDiscovery(), arg.CancelToken).Wait(arg.CancelToken);
-                },
-                new GlobalProgressOptions("Updating Selectable Games MQQT Discovery Topic"));
-
+            Task.Run(
+                () => PublishLibrarySnapshotAsync(null, applicationClosingCompletionSource.Token),
+                applicationClosingCompletionSource.Token);
         }
 
+        public override void OnGameSelected(OnGameSelectedEventArgs args)
+        {
+            // Playnite supplies the actual selection change; publish it for the
+            // native HA select entity instead of pretending MQTT Discovery owns it.
+            Task.Run(
+                () => PublishLibraryStatusAsync(applicationClosingCompletionSource.Token),
+                applicationClosingCompletionSource.Token);
+        }
         public override void Dispose()
         {
+            coverApiServer.Dispose();
             client.Dispose();
             base.Dispose();
         }
 
         public override void OnGameInstalled(OnGameInstalledEventArgs args)
         {
-            if (topicHelper.TryGetTopic(Topics.InstalledDataSubTopic, out var topic))
-            {
-                Task.Run(
-                    async () => PublishGame(
-                        topic,
-                        args.Game,
-                        settings.Settings.PublishCover ? await GetCoverData(args.Game.CoverImage) : null,
-                        false),applicationClosingCompletionSource.Token);
-            }
+            Task.Run(() => PublishLibraryUpdateAsync(args.Game, "game_installed", applicationClosingCompletionSource.Token), applicationClosingCompletionSource.Token);
         }
 
         public override void OnGameStarted(OnGameStartedEventArgs args)
         {
-            if (topicHelper.TryGetTopic(Topics.CurrentStateSubTopic, out var topic))
-            {
-                Task.Run(() => client.PublishStringAsync(topic, "ON", retain: true,cancellationToken:applicationClosingCompletionSource.Token),applicationClosingCompletionSource.Token);
-            }
+            Task.Run(() => PublishLibraryUpdateAsync(args.Game, "game_started", applicationClosingCompletionSource.Token), applicationClosingCompletionSource.Token);
         }
 
         public override void OnGameStarting(OnGameStartingEventArgs args)
         {
-            var tasks = Task.CompletedTask;
-            if (topicHelper.TryGetTopic(Topics.CurrentAttributesSubTopic, out var dataTopic) &&
-                topicHelper.TryGetTopic(Topics.CurrentCoverSubTopic, out var currentCoverTopic) &&
-                topicHelper.TryGetTopic(Topics.CurrentBackgroundSubTopic, out var currentBackgroundTopic) &&
-                topicHelper.TryGetTopic(Topics.CurrentIconTopic, out var iconTopic))
-            {
-                tasks = tasks.ContinueWith(async t => await PublishGame(dataTopic, args.Game, await GetCoverData(args.Game.CoverImage), true,applicationClosingCompletionSource.Token));
-                tasks = tasks.ContinueWith(
-                    async t => await PublishFileAsync(
-                        currentCoverTopic,
-                        args.Game.CoverImage ?? args.Game.Platforms?.FirstOrDefault(p => !string.IsNullOrEmpty(p.Cover))?.Cover,
-                        retain: true,cancellationToken:applicationClosingCompletionSource.Token));
-                tasks = tasks.ContinueWith(
-                    async t => await PublishFileAsync(
-                        currentBackgroundTopic,
-                        args.Game.BackgroundImage ?? args.Game.Platforms?.FirstOrDefault(p => !string.IsNullOrEmpty(p.Background))?.Background,
-                        retain: true,cancellationToken:applicationClosingCompletionSource.Token));
-                tasks = tasks.ContinueWith(
-                    async t => await PublishFileAsync(
-                        iconTopic,
-                        args.Game.Icon ?? args.Game.Platforms?.FirstOrDefault(p => !string.IsNullOrEmpty(p.Icon))?.Icon,
-                        retain: true,cancellationToken: applicationClosingCompletionSource.Token));
-            }
+            Task.Run(() => PublishLibraryUpdateAsync(args.Game, "game_starting", applicationClosingCompletionSource.Token), applicationClosingCompletionSource.Token);
         }
 
         public override void OnGameStopped(OnGameStoppedEventArgs args)
         {
-            var tasks = Task.CompletedTask;
-            if (topicHelper.TryGetTopic(Topics.CurrentStateSubTopic, out var stageTopic))
-            {
-                tasks = tasks.ContinueWith(async t => await client.PublishStringAsync(stageTopic, "OFF", retain: true,cancellationToken:applicationClosingCompletionSource.Token));
-            }
-
-            if (topicHelper.TryGetTopic(Topics.CurrentAttributesSubTopic, out var dataTopic) &&
-                topicHelper.TryGetTopic(Topics.CurrentCoverSubTopic, out var currentCoverTopic) &&
-                topicHelper.TryGetTopic(Topics.CurrentBackgroundSubTopic, out var currentBackgroundTopic) &&
-                topicHelper.TryGetTopic(Topics.CurrentIconTopic, out var iconTopic))
-            {
-                tasks.ContinueWith(async t => await client.PublishStringAsync(dataTopic, retain: true,cancellationToken:applicationClosingCompletionSource.Token));
-                tasks.ContinueWith(async t => await client.PublishStringAsync(currentCoverTopic, retain: true,cancellationToken:applicationClosingCompletionSource.Token));
-                tasks.ContinueWith(async t => await client.PublishStringAsync(currentBackgroundTopic, retain: true, cancellationToken: applicationClosingCompletionSource.Token));
-                tasks.ContinueWith(async t => await client.PublishStringAsync(iconTopic, retain: true, cancellationToken: applicationClosingCompletionSource.Token));
-            }
+            Task.Run(() => PublishLibraryUpdateAsync(args.Game, "game_stopped", applicationClosingCompletionSource.Token), applicationClosingCompletionSource.Token);
         }
 
         public override void OnGameUninstalled(OnGameUninstalledEventArgs args)
         {
-            if (topicHelper.TryGetTopic(Topics.UninstalledDataSubTopic, out var topic))
-            {
-                Task.Run(
-                    async () => await PublishGame(
-                        topic,
-                        args.Game,
-                        settings.Settings.PublishCover ? await GetCoverData(args.Game.CoverImage) : null,
-                        false));
-            }
+            Task.Run(() => PublishLibraryUpdateAsync(args.Game, "game_uninstalled", applicationClosingCompletionSource.Token), applicationClosingCompletionSource.Token);
         }
 
         public override void OnApplicationStarted(OnApplicationStartedEventArgs args)
@@ -545,7 +888,9 @@ namespace MQTTClient
             client.ConnectedAsync += ClientOnConnectedAsync;
             client.ConnectingAsync += ClientOnConnectingAsync;
             client.DisconnectedAsync += ClientOnDisconnectedAsync;
+            client.ApplicationMessageReceivedAsync += ClientOnApplicationMessageReceivedAsync;
             SystemEvents.PowerModeChanged += SystemEventsOnPowerModeChanged;
+            RestartCoverApi();
             if (settings.Settings.ShowProgress)
             {
                 StartConnection();
@@ -590,16 +935,13 @@ namespace MQTTClient
             client.ConnectedAsync -= ClientOnConnectedAsync;
             client.ConnectingAsync -= ClientOnConnectingAsync;
             client.DisconnectedAsync -= ClientOnDisconnectedAsync;
+            client.ApplicationMessageReceivedAsync -= ClientOnApplicationMessageReceivedAsync;
             SystemEvents.PowerModeChanged -= SystemEventsOnPowerModeChanged;
             StartDisconnect().Wait();
             applicationClosingCompletionSource.Cancel();
             applicationClosingCompletionSource.Dispose();
         }
 
-        public override void OnGameSelected(OnGameSelectedEventArgs args)
-        {
-            Task.Run(() => UpdateSelectedGames(args.NewValue,applicationClosingCompletionSource.Token));
-        }
 
         public override IEnumerable<SidebarItem> GetSidebarItems()
         {

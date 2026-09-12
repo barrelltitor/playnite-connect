@@ -1,31 +1,9 @@
-AddonId: MQTTClient_90c44048-4f8f-43f7-a0c1-f8164bf1d7ef
+AddonId: PlayniteConnect_b81e4a83-823d-4a83-89e8-aee39f17a483
 Packages:
-  - Version: 1.3.0
+  - Version: 1.0.6
     RequiredApiVersion: 6.0.0
-    ReleaseDate: 2024-03-28
-    PackageUrl: https://github.com/simeonradivoev/PlayniteMQTTClient/releases/download/v1.3.0/MQTTClient_90c44048-4f8f-43f7-a0c1-f8164bf1d7ef_1_3_0.pext
+    ReleaseDate: 2026-09-12
+    PackageUrl: https://github.com/barrelltitor/PlayniteMQTTClient/releases/download/v1.0.6/PlayniteConnect_b81e4a83-823d-4a83-89e8-aee39f17a483_1_0_6.pext
     Changelog:
-      - Fixed missing source error when no platforms are present in game
-      - Added certification file setting
-  - Version: 1.2.0
-    RequiredApiVersion: 6.0.0
-    ReleaseDate: 2024-01-06
-    PackageUrl: https://github.com/simeonradivoev/PlayniteMQTTClient/releases/download/v1.2.0/MQTTClient_90c44048-4f8f-43f7-a0c1-f8164bf1d7ef_1_2_0.pext
-    Changelog:
-        - Upgrade packages
-        - add options for notification and show status changed
-        - group options
-        - use new options to show or not notifications
-  - Version: 1.1.0
-    RequiredApiVersion: 6.0.0
-    ReleaseDate: 2023-05-04
-    PackageUrl: https://github.com/simeonradivoev/PlayniteMQTTClient/releases/download/v1.1.0/MQTTClient_90c44048-4f8f-43f7-a0c1-f8164bf1d7ef_1_1_0.pext
-    Changelog:
-      - Added automatic connection on machine wakeup
-      - Added option to not display progress par on auto startup
-  - Version: 1.0.1
-    RequiredApiVersion: 6.0.0
-    ReleaseDate: 2022-02-10
-    PackageUrl: https://github.com/simeonradivoev/PlayniteMQTTClient/releases/download/v1.0.1/MQTTClient_90c44048-4f8f-43f7-a0c1-f8164bf1d7ef_1_0_1.pext
-    Changelog:
-      - Fixed json library version to be the same as playnite
+      - Assigned Playnite Connect a distinct add-on ID, so it installs beside upstream MQTT Client.
+      - Includes direct library sync, real lifecycle events, on-demand MQTT images, and the optional authenticated Cover API.

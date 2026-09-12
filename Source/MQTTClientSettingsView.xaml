@@ -1,97 +1,32 @@
-﻿<UserControl x:Class="MQTTClient.MQTTClientSettingsView"
-             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mqttClient="clr-namespace:MQTTClient"
-             mc:Ignorable="d"
-             d:DesignHeight="400" 
-             d:DesignWidth="600">
-    <TabControl ClipToBounds="True" MaxHeight="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type Panel}}, Path=ActualHeight, Mode=OneWay}">
-            <TabItem Header="General">
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Margin="10">
-                    <GroupBox BorderThickness="2">
-                        <GroupBox.Header>
-                            <Label FontWeight="Bold">MQTT Client</Label>
-                        </GroupBox.Header>
-                        <StackPanel>
-                            <TextBlock Text="Client Name:" />
-                            <TextBox Text="{Binding Settings.ClientId}" />
-                        </StackPanel>
-                    </GroupBox>
-                    <GroupBox BorderThickness="2">
-                        <GroupBox.Header>
-                            <Label FontWeight="Bold">MQTT Server</Label>
-                        </GroupBox.Header>
-                        <StackPanel>
-                            <TextBlock Text="MQTT Server Address:" />
-                            <TextBox Text="{Binding Settings.ServerAddress}" />
-                            <TextBlock Text="MQTT Server Port:" />
-                            <TextBox PreviewTextInput="NumberValidationTextBox" Text="{Binding Settings.Port, Converter={mqttClient:NullableUIntToStringConverter}, NotifyOnValidationError=True, UpdateSourceTrigger=PropertyChanged, ValidatesOnDataErrors=True}"/>
-                            <StackPanel Orientation="Horizontal">
-                                <CheckBox IsChecked="{Binding Settings.UseSecureConnection}" Margin="5" />
-                                <TextBlock Text="Secure TCP Connection" VerticalAlignment="Center" />
-                            </StackPanel>
-                            <TextBlock Text="Certificate Path:" />
-                            <TextBox Text="{Binding Settings.CertificatePath}" />
-                            <TextBlock Text="Username:" />
-                            <TextBox Text="{Binding Settings.Username}" />
-                            <TextBlock Text="Password:" />
-                            <PasswordBox x:Name="PasswordBox" PasswordChanged="PasswordBox_OnPasswordChanged" />
-                        </StackPanel>
-                    </GroupBox>
-                    <GroupBox BorderThickness="2">
-                        <GroupBox.Header>
-                            <Label FontWeight="Bold">Display</Label>
-                        </GroupBox.Header>
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal" ToolTip="Should a popup showing progress and allowing canceling show on each playnite start.">
-                                <CheckBox IsChecked="{Binding Settings.ShowProgress}" Margin="5"/>
-                                <TextBlock Text="Show Progress On Startup" VerticalAlignment="Center" />
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" ToolTip="Should a popup showing status changed">
-                                <CheckBox IsChecked="{Binding Settings.ShowStatusChanged}" Margin="5"/>
-                                <TextBlock Text="Show Status Changed" VerticalAlignment="Center" />
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" ToolTip="Should a notification be created">
-                                <CheckBox IsChecked="{Binding Settings.Notifications}" Margin="5"/>
-                                <TextBlock Text="Notification" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </StackPanel>
-                    </GroupBox>
-                </StackPanel>
-                </ScrollViewer>
-            </TabItem>
-            <TabItem Header="Topics">
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Margin="10">
-                        <TextBlock Text="Home Assistant Topic:" ToolTip="This is the home assistant discovery topic. This usually doesn't need to be changed. If Value is left empty discovery will be disabled. Default value is 'homeassistant'"/>
-                        <TextBox Text="{Binding Settings.HomeAssistantTopic}" />
-                        <TextBlock Text="Device Id:" ToolTip="This will be used in the entity name. If this is left empty MQTT publishing will be disabled." />
-                        <TextBox Text="{Binding Settings.DeviceId}" />
-                        <TextBlock Text="Device Name:" ToolTip="This is the name that will be given in home assistant as display name." />
-                        <TextBox Text="{Binding Settings.DeviceName}" />
-                    </StackPanel>
-                </ScrollViewer>
-            </TabItem>
-            <TabItem Header="Publishing">
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Margin="10">
-                        <StackPanel Orientation="Horizontal" ToolTip="Should the dominant color of the cover be published as hue, saturation and brightness">
-                            <CheckBox IsChecked="{Binding Settings.PublishCoverColors}" Margin="5"></CheckBox>
-                            <TextBlock Text="Publish Cover Colors" VerticalAlignment="Center" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" ToolTip="Should the cover image be published for selected games and currently playing games">
-                            <CheckBox IsChecked="{Binding Settings.PublishCover}" Margin="5"></CheckBox>
-                            <TextBlock Text="Publish Cover" VerticalAlignment="Center" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" ToolTip="Should the background image be published for currently playing games">
-                            <CheckBox IsChecked="{Binding Settings.PublishBackground}" Margin="5"></CheckBox>
-                            <TextBlock Text="Publish Background" VerticalAlignment="Center" />
-                        </StackPanel>
-                    </StackPanel>
-                </ScrollViewer>
-            </TabItem>
-        </TabControl>
+<UserControl x:Class="MQTTClient.MQTTClientSettingsView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:mqttClient="clr-namespace:MQTTClient">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="10">
+            <GroupBox Header="MQTT connection" BorderThickness="2"><StackPanel Margin="8">
+                <TextBlock Text="Client ID:" /><TextBox Text="{Binding Settings.ClientId}" />
+                <TextBlock Text="Server address:" /><TextBox Text="{Binding Settings.ServerAddress}" />
+                <TextBlock Text="Server port:" /><TextBox PreviewTextInput="NumberValidationTextBox" Text="{Binding Settings.Port, Converter={mqttClient:NullableIntToStringConverter}, UpdateSourceTrigger=PropertyChanged}" />
+                <CheckBox IsChecked="{Binding Settings.UseSecureConnection}" Content="Secure TCP connection" Margin="0,8,0,0" />
+                <TextBlock Text="Certificate path:" /><TextBox Text="{Binding Settings.CertificatePath}" />
+                <TextBlock Text="Username:" /><TextBox Text="{Binding Settings.Username}" />
+                <TextBlock Text="Password:" /><PasswordBox x:Name="PasswordBox" PasswordChanged="PasswordBox_OnPasswordChanged" />
+            </StackPanel></GroupBox>
+            <GroupBox Header="Library sync" BorderThickness="2" Margin="0,8,0,0"><StackPanel Margin="8">
+                <TextBlock Text="Device ID:" ToolTip="Used in playnite/&lt;device-id&gt;/library/... MQTT topics." /><TextBox Text="{Binding Settings.DeviceId}" />
+            </StackPanel></GroupBox>
+            <GroupBox Header="Cover API" BorderThickness="2" Margin="0,8,0,0"><StackPanel Margin="8">
+                <CheckBox IsChecked="{Binding Settings.CoverApiEnabled}" Content="Enable local cover API" />
+                <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextBrushDarker}">Disabled by default. When enabled, the API starts on localhost only. Home Assistant fetches covers with the bearer token below; browsers never receive it.</TextBlock>
+                <TextBlock Text="API port:" Margin="0,8,0,0" /><TextBox PreviewTextInput="NumberValidationTextBox" Text="{Binding Settings.CoverApiPort, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Text="Home Assistant IPv4 address:" Margin="0,8,0,0" /><TextBox Text="{Binding Settings.CoverApiHomeAssistantAddress, UpdateSourceTrigger=PropertyChanged}" ToolTip="Only this address is allowed through the Windows Firewall rule when network access is enabled." />
+                <Button Content="Enable network access for Home Assistant" Margin="0,8,0,0" HorizontalAlignment="Left" Padding="10,4" Click="EnableCoverApiNetwork_Click" />
+                <TextBlock Text="Bearer token:" Margin="0,8,0,0" /><DockPanel><Button DockPanel.Dock="Right" Content="Copy" Margin="8,0,0,0" Padding="10,4" Click="CopyCoverApiToken_Click" /><TextBox Text="{Binding Settings.CoverApiToken}" IsReadOnly="True" /></DockPanel>
+                <Button Content="Regenerate token" Margin="0,8,0,0" HorizontalAlignment="Left" Padding="10,4" Click="RegenerateCoverApiToken_Click" />
+            </StackPanel></GroupBox>
+            <GroupBox Header="Display" BorderThickness="2" Margin="0,8,0,0"><StackPanel Margin="8">
+                <CheckBox IsChecked="{Binding Settings.ShowProgress}" Content="Show connection progress on startup" />
+                <CheckBox IsChecked="{Binding Settings.ShowStatusChanged}" Content="Show connection status messages" />
+                <CheckBox IsChecked="{Binding Settings.Notifications}" Content="Show connection notifications" />
+            </StackPanel></GroupBox>
+        </StackPanel>
+    </ScrollViewer>
 </UserControl>
