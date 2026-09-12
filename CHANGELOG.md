@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.7 - 2026-09-12
+
+### Fixed
+
+- Stops emulated games by requesting the configured emulator close cleanly, rather than force-killing a process in the game's directory.
+
 ## 1.0.6 - 2026-09-12
 
 ### Changed

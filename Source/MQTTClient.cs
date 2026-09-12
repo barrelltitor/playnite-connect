@@ -686,22 +686,22 @@ namespace MQTTClient
                         }
                         break;
                     case "stop":
-                        var stoppedCount = StopGameProcesses(game);
-                        if (stoppedCount == 0)
+                        var stopResult = await StopGameAsync(game, cancellationToken);
+                        if (stopResult.ProcessCount == 0)
                         {
-                            throw new InvalidOperationException("No running process could be matched safely to this game's install directory.");
+                            throw new InvalidOperationException(stopResult.FailureMessage);
                         }
-                        response.Message = $"Stopped {stoppedCount} game process(es).";
+                        response.Message = stopResult.Message;
                         break;
                     case "restart":
-                        var restartStoppedCount = StopGameProcesses(game);
-                        if (restartStoppedCount == 0)
+                        var restartStopResult = await StopGameAsync(game, cancellationToken);
+                        if (restartStopResult.ProcessCount == 0)
                         {
-                            throw new InvalidOperationException("No running process could be matched safely to this game's install directory.");
+                            throw new InvalidOperationException(restartStopResult.FailureMessage);
                         }
                         await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
                         PlayniteApi.StartGame(gameId);
-                        response.Message = $"Stopped {restartStoppedCount} game process(es) and requested restart.";
+                        response.Message = $"{restartStopResult.Message} Restart requested.";
                         break;
                     default:
                         throw new InvalidOperationException("Unsupported action. Use select, start, stop, restart, install, or uninstall.");
@@ -795,6 +795,142 @@ namespace MQTTClient
                 return false;
             }
         }
+        private async Task<StopGameResult> StopGameAsync(Game game, CancellationToken cancellationToken)
+        {
+            var emulatorExecutablePath = GetEmulatorExecutablePath(game);
+            if (!string.IsNullOrEmpty(emulatorExecutablePath))
+            {
+                var gracefulStopCount = RequestGracefulProcessStop(emulatorExecutablePath);
+                if (gracefulStopCount == 0)
+                {
+                    return StopGameResult.Failed("No running emulator process could be matched safely to this game's configured emulator.");
+                }
+
+                // Windows has no portable SIGTERM equivalent. CloseMainWindow sends the
+                // emulator a normal WM_CLOSE request so it can save state and run its
+                // own cleanup instead of being forcibly terminated.
+                if (!await WaitForProcessesToExitAsync(emulatorExecutablePath, cancellationToken))
+                {
+                    return StopGameResult.Failed("The emulator received a graceful stop request but was still running after 10 seconds.");
+                }
+
+                return StopGameResult.Succeeded(gracefulStopCount, "Stopped the emulator cleanly.");
+            }
+
+            var stoppedCount = StopGameProcesses(game);
+            return stoppedCount > 0
+                ? StopGameResult.Succeeded(stoppedCount, $"Stopped {stoppedCount} game process(es).")
+                : StopGameResult.Failed("No running process could be matched safely to this game's install directory.");
+        }
+
+        private string GetEmulatorExecutablePath(Game game)
+        {
+            var action = game.GameActions?.FirstOrDefault(item =>
+                item.IsPlayAction && item.Type == GameActionType.Emulator);
+            if (action == null)
+            {
+                return null;
+            }
+
+            var emulator = PlayniteApi.Database.Emulators.FirstOrDefault(item => item.Id == action.EmulatorId);
+            if (emulator == null)
+            {
+                logger.Warn($"Unable to resolve the emulator configured for {game.Name}.");
+                return null;
+            }
+
+            var profile = emulator.GetProfile(action.EmulatorProfileId);
+            string executable = null;
+            if (profile is CustomEmulatorProfile customProfile)
+            {
+                executable = customProfile.Executable;
+            }
+            else if (profile is BuiltInEmulatorProfile builtInProfile)
+            {
+                var definition = PlayniteApi.Emulation.GetEmulator(emulator.BuiltInConfigId);
+                executable = definition?.Profiles
+                    .FirstOrDefault(item => item.Name == builtInProfile.BuiltInProfileName)
+                    ?.StartupExecutable;
+            }
+
+            if (string.IsNullOrWhiteSpace(executable))
+            {
+                logger.Warn($"The emulator profile configured for {game.Name} does not expose an executable path.");
+                return null;
+            }
+
+            executable = PlayniteApi.ExpandGameVariables(game, executable, emulator.InstallDir);
+            if (!Path.IsPathRooted(executable))
+            {
+                executable = Path.Combine(emulator.InstallDir ?? string.Empty, executable);
+            }
+
+            return File.Exists(executable) ? Path.GetFullPath(executable) : null;
+        }
+
+        private static int RequestGracefulProcessStop(string executablePath)
+        {
+            var stoppedCount = 0;
+            foreach (var process in Process.GetProcesses())
+            {
+                try
+                {
+                    if (!string.Equals(process.MainModule?.FileName, executablePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (process.CloseMainWindow())
+                    {
+                        stoppedCount++;
+                    }
+                }
+                catch (Exception)
+                {
+                    // Processes owned by another session or protected by Windows are
+                    // ignored. The response reports failure if none can be stopped.
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+
+            return stoppedCount;
+        }
+
+        private static async Task<bool> WaitForProcessesToExitAsync(string executablePath, CancellationToken cancellationToken)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < deadline)
+            {
+                var isStillRunning = Process.GetProcesses().Any(process =>
+                {
+                    try
+                    {
+                        return string.Equals(process.MainModule?.FileName, executablePath, StringComparison.OrdinalIgnoreCase);
+                    }
+                    catch (Exception)
+                    {
+                        return false;
+                    }
+                    finally
+                    {
+                        process.Dispose();
+                    }
+                });
+
+                if (!isStillRunning)
+                {
+                    return true;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+            }
+
+            return false;
+        }
+
         private static int StopGameProcesses(Game game)
         {
             if (string.IsNullOrWhiteSpace(game.InstallDirectory) || !Directory.Exists(game.InstallDirectory))
@@ -831,6 +967,30 @@ namespace MQTTClient
             }
 
             return stoppedCount;
+        }
+
+        private sealed class StopGameResult
+        {
+            public int ProcessCount { get; }
+            public string Message { get; }
+            public string FailureMessage { get; }
+
+            private StopGameResult(int processCount, string message, string failureMessage)
+            {
+                ProcessCount = processCount;
+                Message = message;
+                FailureMessage = failureMessage;
+            }
+
+            public static StopGameResult Succeeded(int processCount, string message)
+            {
+                return new StopGameResult(processCount, message, null);
+            }
+
+            public static StopGameResult Failed(string failureMessage)
+            {
+                return new StopGameResult(0, null, failureMessage);
+            }
         }
         #region Overrides of Plugin
 
