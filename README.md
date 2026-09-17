@@ -1,8 +1,12 @@
+<p align="center">
+  <img src="Source/Resources/icon.png" alt="Playnite Connect logo" width="96">
+</p>
+
 # Playnite Connect
 
 Playnite Connect is a Playnite extension that makes your game library and game
 controls available to Home Assistant through MQTT. It is designed to work with
-the [Playnite Connect Companion Home Assistant integration](https://github.com/barrelltitor/playnite-connect-companion).
+the [Playnite Connect Companion](https://github.com/barrelltitor/playnite-connect-companion).
 
 ## Features
 
@@ -41,7 +45,10 @@ integration. The API is disabled by default and requires a bearer token.
 MQTT commands can control Playnite. Use broker authentication and limit access
 to the Playnite Connect topics to trusted clients.
 
-## Based on Playnite MQTT Client
+## Honorable mentions
 
 Playnite Connect is based on [Playnite MQTT Client](https://github.com/simeonradivoev/PlayniteMQTTClient)
 by Simeon Radivoev. This fork keeps the original MIT license and attribution.
+
+The optional authenticated HTTP Cover API is based on the approach used by
+[Playnite Bridge](https://github.com/rollacode/playnite-bridge).

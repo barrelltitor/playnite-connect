@@ -10,6 +10,7 @@ using Playnite.SDK.Events;
 using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -48,6 +49,16 @@ namespace MQTTClient
         private readonly IProgress<float> sidebarProgress;
 
         private readonly SemaphoreSlim librarySyncLock = new SemaphoreSlim(1, 1);
+
+        private const int CoverTransferWorkerCount = 3;
+
+        // MQTTnet processes one received PUBLISH callback at a time. A cover can
+        // comprise many QoS 1 chunks, so requests leave that callback immediately
+        // and run through this small fixed worker pool instead.
+        private readonly ConcurrentQueue<LibraryCoverRequest> coverTransferQueue =
+            new ConcurrentQueue<LibraryCoverRequest>();
+
+        private readonly SemaphoreSlim coverTransferSignal = new SemaphoreSlim(0);
 
         private readonly IProgress<ConnectionState> connectedState;
 
@@ -122,7 +133,11 @@ namespace MQTTClient
             {
                 if (topicHelper.TryGetTopic(Topics.ConnectionSubTopic, out var connectionTopic))
                 {
-                    await client.PublishStringAsync(connectionTopic, "offline", retain: true);
+                    await client.PublishStringAsync(
+                        connectionTopic,
+                        "offline",
+                        MqttQualityOfServiceLevel.AtLeastOnce,
+                        retain: true);
                 }
             }
             catch (Exception exception)
@@ -153,6 +168,20 @@ namespace MQTTClient
                 .WithTcpServer(settings.Settings.ServerAddress, settings.Settings.Port)
                 .WithCredentials(settings.Settings.Username, LoadPassword())
                 .WithCleanSession().WithKeepAlivePeriod(TimeSpan.FromSeconds(5));
+
+            // Publish retained offline if this Playnite process exits without a
+            // clean MQTT disconnect (for example a crash, force-close, or lost
+            // network connection). The Companion maps this into its
+            // connectivity binary sensor for reliable automation conditions.
+            if (!string.IsNullOrWhiteSpace(settings.Settings.DeviceId))
+            {
+                var connectionTopic = $"playnite/{settings.Settings.DeviceId}/{Topics.ConnectionSubTopic}";
+                optionsUnBuilt = optionsUnBuilt
+                    .WithWillTopic(connectionTopic)
+                    .WithWillPayload("offline")
+                    .WithWillQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
+                    .WithWillRetain(true);
+            }
 
             if (settings.Settings.UseSecureConnection)
             {
@@ -260,7 +289,12 @@ namespace MQTTClient
             sidebarProgress.Report(0.6f);
             if (topicHelper.TryGetTopic(Topics.ConnectionSubTopic, out var connectionTopic))
             {
-                await client.PublishStringAsync(connectionTopic, "online", cancellationToken: applicationClosingCompletionSource.Token, retain: true);
+                await client.PublishStringAsync(
+                    connectionTopic,
+                    "online",
+                    MqttQualityOfServiceLevel.AtLeastOnce,
+                    retain: true,
+                    cancellationToken: applicationClosingCompletionSource.Token);
             }
 
             await SubscribeToLibraryProtocolAsync(applicationClosingCompletionSource.Token);
@@ -377,12 +411,76 @@ namespace MQTTClient
                         throw new InvalidOperationException("Cover request payload is empty.");
                     }
 
-                    await PublishCoverAsync(request, applicationClosingCompletionSource.Token);
+                    QueueCoverPublish(request);
                 }
             }
             catch (Exception exception)
             {
                 logger.Error(exception, "Failed to process a Playnite library MQTT message.");
+            }
+        }
+        private void StartCoverTransferWorkers()
+        {
+            var cancellationToken = applicationClosingCompletionSource.Token;
+            for (var index = 0; index < CoverTransferWorkerCount; index++)
+            {
+                Task.Run(() => ProcessCoverTransferQueueAsync(cancellationToken));
+            }
+        }
+
+        private void QueueCoverPublish(LibraryCoverRequest request)
+        {
+            // Finish MQTTnet's receive callback before publishing any QoS 1 chunks.
+            // The fixed worker pool keeps a media-browser refresh from flooding the
+            // broker or creating an unbounded number of background transfer tasks.
+            coverTransferQueue.Enqueue(request);
+            coverTransferSignal.Release();
+        }
+
+        private async Task ProcessCoverTransferQueueAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                while (true)
+                {
+                    await coverTransferSignal.WaitAsync(cancellationToken);
+                    if (!coverTransferQueue.TryDequeue(out var request))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        await PublishCoverAsync(request, cancellationToken);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    catch (Exception exception)
+                    {
+                        logger.Error(exception, "Failed to publish a requested Playnite cover.");
+                        try
+                        {
+                            await PublishCoverErrorAsync(
+                                request,
+                                "Playnite could not transfer this image.",
+                                cancellationToken);
+                        }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        {
+                            return;
+                        }
+                        catch (Exception responseException)
+                        {
+                            logger.Error(responseException, "Failed to report a Playnite cover transfer error.");
+                        }
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Playnite is stopping; no broker response is expected at shutdown.
             }
         }
         private async Task PublishLibrarySnapshotAsync(string requestId, CancellationToken cancellationToken)
@@ -1049,6 +1147,7 @@ namespace MQTTClient
             client.ConnectingAsync += ClientOnConnectingAsync;
             client.DisconnectedAsync += ClientOnDisconnectedAsync;
             client.ApplicationMessageReceivedAsync += ClientOnApplicationMessageReceivedAsync;
+            StartCoverTransferWorkers();
             SystemEvents.PowerModeChanged += SystemEventsOnPowerModeChanged;
             RestartCoverApi();
             if (settings.Settings.ShowProgress)
