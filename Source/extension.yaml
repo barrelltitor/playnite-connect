@@ -1,7 +1,7 @@
 Id: PlayniteConnect_b81e4a83-823d-4a83-89e8-aee39f17a483
 Name: Playnite Connect
 Author: Barrelltitor
-Version: 1.0.7
+Version: 1.0.8
 Icon: Resources/icon.png
 Module: PlayniteConnect.dll
 Type: GenericPlugin

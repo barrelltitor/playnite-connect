@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.8 - 2026-09-17
+
+### Changed
+
+- Improved MQTT availability reporting for Home Assistant with retained QoS 1 status messages and a last-will offline status.
+- Moved on-demand cover transfers to a small worker pool, keeping MQTT message handling responsive during image transfers.
+- Updated the Playnite Connect icon.
+
+### Fixed
+
+- Returns an error response when a requested cover cannot be transferred.
+
+
 ## 1.0.7 - 2026-09-12
 
 ### Fixed
