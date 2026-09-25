@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace MQTTClient
+namespace PlayniteConnect
 {
     /// <summary>
     /// Versioned messages used to synchronize a browseable Playnite library.

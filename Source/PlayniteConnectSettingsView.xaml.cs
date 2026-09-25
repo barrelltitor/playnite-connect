@@ -3,11 +3,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 
-namespace MQTTClient
+namespace PlayniteConnect
 {
-    public partial class MQTTClientSettingsView : UserControl
+    public partial class PlayniteConnectSettingsView : UserControl
     {
-        public MQTTClientSettingsView()
+        public PlayniteConnectSettingsView()
         {
             InitializeComponent();
         }
@@ -20,13 +20,13 @@ namespace MQTTClient
 
         private void PasswordBox_OnPasswordChanged(object sender, RoutedEventArgs e)
         {
-            var context = DataContext as MQTTClientSettingsViewModel;
+            var context = DataContext as PlayniteConnectSettingsViewModel;
             context?.SavePassword(PasswordBox.Password);
         }
 
         private void CopyCoverApiToken_Click(object sender, RoutedEventArgs e)
         {
-            var context = DataContext as MQTTClientSettingsViewModel;
+            var context = DataContext as PlayniteConnectSettingsViewModel;
             if (context != null)
             {
                 Clipboard.SetText(context.Settings.CoverApiToken);
@@ -35,7 +35,7 @@ namespace MQTTClient
 
         private void RegenerateCoverApiToken_Click(object sender, RoutedEventArgs e)
         {
-            var context = DataContext as MQTTClientSettingsViewModel;
+            var context = DataContext as PlayniteConnectSettingsViewModel;
             if (context == null)
             {
                 return;
@@ -48,7 +48,7 @@ namespace MQTTClient
 
         private void EnableCoverApiNetwork_Click(object sender, RoutedEventArgs e)
         {
-            var context = DataContext as MQTTClientSettingsViewModel;
+            var context = DataContext as PlayniteConnectSettingsViewModel;
             if (context == null)
             {
                 return;

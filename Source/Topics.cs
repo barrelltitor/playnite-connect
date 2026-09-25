@@ -1,4 +1,4 @@
-namespace MQTTClient
+namespace PlayniteConnect
 {
     public static class Topics
     {

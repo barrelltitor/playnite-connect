@@ -5,9 +5,9 @@ using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace MQTTClient
+namespace PlayniteConnect
 {
-    public class MQTTClientSettings : ObservableObject
+    public class PlayniteConnectSettings : ObservableObject
     {
         private string clientId = "Playnite";
         private string deviceId = "playnite";
@@ -46,17 +46,17 @@ namespace MQTTClient
         public string CoverApiToken { get => coverApiToken; set => SetValue(ref coverApiToken, value); }
     }
 
-    public class MQTTClientSettingsViewModel : ObservableObject, ISettings
+    public class PlayniteConnectSettingsViewModel : ObservableObject, ISettings
     {
-        private readonly MQTTClient plugin;
-        private MQTTClientSettings settings;
-        public MQTTClientSettings Settings { get => settings; set { settings = value; OnPropertyChanged(); } }
-        private MQTTClientSettings editingClone { get; set; }
+        private readonly PlayniteConnectPlugin plugin;
+        private PlayniteConnectSettings settings;
+        public PlayniteConnectSettings Settings { get => settings; set { settings = value; OnPropertyChanged(); } }
+        private PlayniteConnectSettings editingClone { get; set; }
 
-        public MQTTClientSettingsViewModel(MQTTClient plugin)
+        public PlayniteConnectSettingsViewModel(PlayniteConnectPlugin plugin)
         {
             this.plugin = plugin;
-            Settings = plugin.LoadPluginSettings<MQTTClientSettings>() ?? new MQTTClientSettings();
+            Settings = plugin.LoadPluginSettings<PlayniteConnectSettings>() ?? new PlayniteConnectSettings();
             EnsureCoverApiToken();
         }
 

@@ -7,7 +7,7 @@
     <ProjectGuid>{4FDF1E89-5BC3-4C72-8FDA-0D580E7A5D5F}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>MQTTClient</RootNamespace>
+    <RootNamespace>PlayniteConnect</RootNamespace>
     <AssemblyName>PlayniteConnect</AssemblyName>
     <TargetFrameworkVersion>v4.6.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
@@ -42,17 +42,21 @@
     <Reference Include="mscorlib" />
     <Reference Include="Newtonsoft.Json, Version=10.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <HintPath>packages\Newtonsoft.Json.10.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
+      <!-- Playnite ships this matching assembly; do not package a second copy. -->
+      <Private>False</Private>
     </Reference>
     <Reference Include="Playnite.SDK, Version=6.9.0.0, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>packages\PlayniteSDK.6.9.0\lib\net462\Playnite.SDK.dll</HintPath>
+      <Private>False</Private>
     </Reference>
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Numerics" />
-    <Reference Include="System.Security, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
-      <HintPath>C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Security.dll</HintPath>
+    <!-- ProtectedData is provided by the .NET Framework target; do not copy a machine-specific framework DLL. -->
+    <Reference Include="System.Security">
+      <Private>False</Private>
     </Reference>
     <Reference Include="System.Xaml" />
     <Reference Include="System.Xml.Linq" />
@@ -69,10 +73,10 @@
     <Compile Include="LibraryProtocol.cs" />
     <Compile Include="Helpers\ObjectSerializer.cs" />
     <Compile Include="Helpers\TopicHelper.cs" />
-    <Compile Include="MQTTClient.cs" />
-    <Compile Include="MQTTClientSettings.cs" />
-    <Compile Include="MQTTClientSettingsView.xaml.cs">
-      <DependentUpon>MQTTClientSettingsView.xaml</DependentUpon>
+    <Compile Include="PlayniteConnectPlugin.cs" />
+    <Compile Include="PlayniteConnectSettings.cs" />
+    <Compile Include="PlayniteConnectSettingsView.xaml.cs">
+      <DependentUpon>PlayniteConnectSettingsView.xaml</DependentUpon>
     </Compile>
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Topics.cs" />
@@ -84,7 +88,7 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <Page Include="MQTTClientSettingsView.xaml">
+    <Page Include="PlayniteConnectSettingsView.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

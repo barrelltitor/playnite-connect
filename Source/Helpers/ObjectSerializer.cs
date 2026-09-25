@@ -1,7 +1,7 @@
 ﻿using Newtonsoft.Json;
 using System.IO;
 
-namespace MQTTClient.Helpers
+namespace PlayniteConnect.Helpers
 {
     public class ObjectSerializer
     {

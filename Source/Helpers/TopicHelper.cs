@@ -1,33 +1,44 @@
 ﻿using MQTTnet.Client;
+using System.Threading;
 
-namespace MQTTClient.Helpers
+namespace PlayniteConnect.Helpers
 {
     public class TopicHelper
     {
         private readonly MqttClient client;
 
-        private readonly MQTTClientSettingsViewModel settings;
 
-        public TopicHelper(MqttClient client, MQTTClientSettingsViewModel settings)
+        // Settings can be edited while MQTT is still connected. Keep routing on the
+        // device ID that established the active session until the next connection
+        // has been configured, so the old retained availability state is cleared.
+        private string activeDeviceId;
+
+        public TopicHelper(MqttClient client, PlayniteConnectSettingsViewModel settings)
         {
             this.client = client;
-            this.settings = settings;
+            activeDeviceId = settings.Settings.DeviceId;
         }
 
-        public bool TryGetTopic(string subTopic,out string topicOut)
+        public void SetActiveDeviceId(string deviceId)
         {
-            if (!client.IsConnected || string.IsNullOrEmpty(settings.Settings.DeviceId))
+            Volatile.Write(ref activeDeviceId, deviceId);
+        }
+
+        public bool TryGetTopic(string subTopic, out string topicOut)
+        {
+            var deviceId = Volatile.Read(ref activeDeviceId);
+            if (!client.IsConnected || string.IsNullOrEmpty(deviceId))
             {
                 topicOut = null;
                 return false;
             }
-            
+
             if (!string.IsNullOrEmpty(subTopic))
             {
-                topicOut = $"playnite/{settings.Settings.DeviceId}/{subTopic}";
+                topicOut = $"playnite/{deviceId}/{subTopic}";
                 return true;
             }
-            
+
             topicOut = null;
             return false;
         }

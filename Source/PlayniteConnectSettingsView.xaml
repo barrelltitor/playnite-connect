@@ -1,10 +1,10 @@
-<UserControl x:Class="MQTTClient.MQTTClientSettingsView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:mqttClient="clr-namespace:MQTTClient">
+<UserControl x:Class="PlayniteConnect.PlayniteConnectSettingsView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:PlayniteConnect">
     <ScrollViewer HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="10">
             <GroupBox Header="MQTT connection" BorderThickness="2"><StackPanel Margin="8">
                 <TextBlock Text="Client ID:" /><TextBox Text="{Binding Settings.ClientId}" />
                 <TextBlock Text="Server address:" /><TextBox Text="{Binding Settings.ServerAddress}" />
-                <TextBlock Text="Server port:" /><TextBox PreviewTextInput="NumberValidationTextBox" Text="{Binding Settings.Port, Converter={mqttClient:NullableIntToStringConverter}, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Text="Server port:" /><TextBox PreviewTextInput="NumberValidationTextBox" Text="{Binding Settings.Port, Converter={local:NullableIntToStringConverter}, UpdateSourceTrigger=PropertyChanged}" />
                 <CheckBox IsChecked="{Binding Settings.UseSecureConnection}" Content="Secure TCP connection" Margin="0,8,0,0" />
                 <TextBlock Text="Certificate path:" /><TextBox Text="{Binding Settings.CertificatePath}" />
                 <TextBlock Text="Username:" /><TextBox Text="{Binding Settings.Username}" />

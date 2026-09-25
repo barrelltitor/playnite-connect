@@ -14,10 +14,3 @@ Packages:
     PackageUrl: https://github.com/barrelltitor/playnite-connect/releases/download/v1.0.7/PlayniteConnect_b81e4a83-823d-4a83-89e8-aee39f17a483_1_0_7.pext
     Changelog:
       - Stops emulated games by requesting the configured emulator close cleanly instead of force-killing it.
-  - Version: 1.0.6
-    RequiredApiVersion: 6.0.0
-    ReleaseDate: 2026-09-12
-    PackageUrl: https://github.com/barrelltitor/PlayniteMQTTClient/releases/download/v1.0.6/PlayniteConnect_b81e4a83-823d-4a83-89e8-aee39f17a483_1_0_6.pext
-    Changelog:
-      - Assigned Playnite Connect a distinct add-on ID, so it installs beside upstream MQTT Client.
-      - Includes direct library sync, real lifecycle events, on-demand MQTT images, and the optional authenticated Cover API.

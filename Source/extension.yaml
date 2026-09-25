@@ -6,5 +6,5 @@ Icon: Resources/icon.png
 Module: PlayniteConnect.dll
 Type: GenericPlugin
 Links:
-  - Name: Github
+  - Name: GitHub
     URL: https://github.com/barrelltitor/playnite-connect
