@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.9 - 2026-10-26
+
+### Added
+
+- Publishes each game's saved web link with the Home Assistant library data.
+- Builds a Steam store URL only from a numeric app ID on a Steam-sourced game.
+
 ## 1.0.8 - 2026-09-17
 
 ### Changed

@@ -57,6 +57,7 @@ namespace PlayniteConnect
             Modified = game.Modified;
             Version = game.Version;
             Source = game.Source?.Name;
+            GameUrl = GetGameUrl(game);
             Platforms = game.Platforms?.Where(platform => platform != null).Select(platform => new LibraryPlatformData
             {
                 Id = platform.Id.ToString(),
@@ -119,6 +120,9 @@ namespace PlayniteConnect
         [JsonProperty("source")]
         public string Source { get; set; }
 
+        [JsonProperty("gameUrl")]
+        public string GameUrl { get; set; }
+
         [JsonProperty("platforms")]
         public List<LibraryPlatformData> Platforms { get; set; }
 
@@ -133,6 +137,57 @@ namespace PlayniteConnect
 
         [JsonProperty("genres")]
         public List<string> Genres { get; set; }
+
+        private static string GetGameUrl(Game game)
+        {
+            var links = game.Links?
+                .Where(link => link != null)
+                .Where(link => NormalizeWebUrl(link.Url) != null)
+                .ToList() ?? new List<Link>();
+
+            var sourceName = game.Source?.Name;
+            var preferredLink = links.FirstOrDefault(link =>
+                !string.IsNullOrWhiteSpace(link.Name) &&
+                link.Name.IndexOf(
+                    "store", StringComparison.OrdinalIgnoreCase) >= 0);
+            preferredLink = preferredLink ?? links.FirstOrDefault(link =>
+                !string.IsNullOrWhiteSpace(sourceName) &&
+                string.Equals(
+                    link.Name,
+                    sourceName,
+                    StringComparison.OrdinalIgnoreCase));
+            preferredLink = preferredLink ?? links.FirstOrDefault();
+            if (preferredLink != null)
+            {
+                return NormalizeWebUrl(preferredLink.Url);
+            }
+
+            if (string.Equals(
+                    sourceName,
+                    "Steam",
+                    StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(game.GameId, out var steamAppId) &&
+                steamAppId > 0)
+            {
+                return $"https://store.steampowered.com/app/{steamAppId}";
+            }
+
+            return null;
+        }
+
+        private static string NormalizeWebUrl(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) ||
+                !Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp &&
+                    uri.Scheme != Uri.UriSchemeHttps) ||
+                string.IsNullOrWhiteSpace(uri.Host))
+            {
+                return null;
+            }
+
+            return value.Trim();
+        }
     }
 
     public class LibraryManifest
